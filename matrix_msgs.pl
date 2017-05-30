@@ -22,9 +22,9 @@ $VERSION = '1.0';
 %IRSSI = (
 	author      => 'Mattias Hansson',
 	contact     => 'hansson.mattias@gmail.com',
-	url         => 'http://github.com/orzen',
+	url         => 'http://github.com/orzen/matrix_msgs',
 	name        => 'matrix_msgs',
-	description => "Forward private and public messages/mentions to your matrix account.",
+	description => "Forward private messages/mentions to a matrix account.",
 	license     => "GPLv2",
 );
 
@@ -58,7 +58,6 @@ $room_id_filename = Irssi::get_irssi_dir . '/matrix_room_id_cache';
 	to_user   => $IRSSI{'name'} . '_to_user',
 	to_node   => $IRSSI{'name'} . '_to_node',
 	room      => $IRSSI{'name'} . '_room',
-	pub_msgs  => $IRSSI{'name'} . '_send_public_messages',
 	priv_msgs => $IRSSI{'name'} . '_send_private_messages',
 	mentions  => $IRSSI{'name'} . '_send_mentions',
 );
@@ -286,11 +285,13 @@ sub send_message {
 }
 
 sub handle_pub_msgs {
-	my ($server, $message, $user, $target) = @_;
+	my ($server, $message, $user, $address, $target) = @_;
 
 	my $message_str;
 
-	if (index($message, $server->{nick}) >= 0) {
+	if (index($message, $server->{nick}) >= 0 &&
+	    $settings_mentions &&
+	    $server->{usermode_away}) {
 		$message_str = $user . '@' . $target . ': ' . $message;
 
 		send_message($settings_node,
@@ -311,32 +312,16 @@ sub handle_priv_msgs {
 
 	my $message_str;
 
-	$message_str = $user . ' (private): ' . $message;
-
-	send_message($settings_node,
-	             $settings_user,
-	             $settings_password,
-	             $settings_to_user,
-	             $settings_to_node,
-	             $settings_room,
-	             $room_id_filename,
-	             $message_str);
-
-	return;
-}
-
-sub handle_own_public_msgs {
-	my ($server, $message, $target) = @_;
-
-	irc_log("own public: $message, $target");
-
-	return;
-}
-
-sub handle_own_private_msgs {
-	my ($server, $message, $target, $original_target) = @_;
-
-	irc_log("own private: $message, $target, $original_target");
+	if ($settings_priv_msgs && $server->{usermode_away}) {
+		send_message($settings_node,
+		             $settings_user,
+		             $settings_password,
+		             $settings_to_user,
+		             $settings_to_node,
+		             $settings_room,
+		             $room_id_filename,
+		             $message_str);
+	}
 
 	return;
 }
@@ -349,7 +334,6 @@ sub load_settings {
 	$settings_to_user   = Irssi::settings_get_str($settings_str{'to_user'});
 	$settings_to_node   = Irssi::settings_get_str($settings_str{'to_node'});
 	$settings_room      = Irssi::settings_get_str($settings_str{'room'});
-	$settings_pub_msgs  = Irssi::settings_get_bool($settings_str{'pub_msgs'});
 	$settings_priv_msgs = Irssi::settings_get_bool($settings_str{'priv_msgs'});
 	$settings_mentions  = Irssi::settings_get_bool($settings_str{'mentions'});
 }
@@ -357,7 +341,6 @@ sub load_settings {
 sub init {
 	Irssi::theme_register(
 		[
-			verbatim => '[$*]',
 			script_loaded => 'Loaded script {hilight $0} v$1',
 			$FORMAT => '$0',
 		]);
@@ -371,25 +354,21 @@ sub init {
 	Irssi::settings_add_str($settings_section, $settings_str{'to_user'}, '');
 	Irssi::settings_add_str($settings_section, $settings_str{'to_node'}, 'https://matrix.org');
 	Irssi::settings_add_str($settings_section, $settings_str{'room'}, '');
-	Irssi::settings_add_bool($settings_section, $settings_str{'pub_msgs'}, 0);
 	Irssi::settings_add_bool($settings_section, $settings_str{'priv_msgs'}, 0);
 	Irssi::settings_add_bool($settings_section, $settings_str{'mentions'}, 0);
 
 	load_settings();
 
 	# Same callback function for mentions and public messages
-	if ($settings_pub_msgs || $settings_mentions) {
+	if ($settings_mentions) {
+		Irssi::signal_add_last('message public', 'handle_pub_msgs');
 	}
-	Irssi::signal_add('message public', 'handle_pub_msgs');
 
 	if ($settings_priv_msgs) {
+		Irssi::signal_add_last('message private', 'handle_priv_msgs');
 	}
-	Irssi::signal_add('message private', 'handle_priv_msgs');
 
-	Irssi::signal_add('message own_public', 'handle_own_public_msgs');
-	Irssi::signal_add('message own_private', 'handle_own_private_msgs');
-
-	Irssi::signal_add('setup changed', \&load_settings);
+	Irssi::signal_add_last('setup changed', \&load_settings);
 
 	Irssi::printformat(Irssi::MSGLEVEL_CLIENTCRAP,
 	                   'script_loaded',
