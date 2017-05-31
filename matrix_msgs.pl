@@ -1,3 +1,23 @@
+# Copyright (c) 2017 Mattias Hansson, <hansson.mattias@gmail.com>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 use strict;
 use warnings;
 
@@ -39,7 +59,7 @@ my $settings_node;
 my $settings_password;
 my $settings_to_user;
 my $settings_to_node;
-my $settings_pub_msgs;
+my $settings_away_only;
 my $settings_priv_msgs;
 my $settings_mentions;
 my $settings_room;
@@ -58,6 +78,7 @@ $room_id_filename = Irssi::get_irssi_dir . '/matrix_room_id_cache';
 	to_user   => $IRSSI{'name'} . '_to_user',
 	to_node   => $IRSSI{'name'} . '_to_node',
 	room      => $IRSSI{'name'} . '_room',
+	away_only => $IRSSI{'name'} . '_forward_when_away_only',
 	priv_msgs => $IRSSI{'name'} . '_send_private_messages',
 	mentions  => $IRSSI{'name'} . '_send_mentions',
 );
@@ -210,6 +231,7 @@ sub matrix_send_msg {
 	$url = $node . $endpoint;
 
 	$msg{'msgtype'} = "m.text";
+	# TODO encode message
 	$msg{'body'} = $message;
 
 	%res = http_dispatch_json('PUT', $url, %msg);
@@ -247,6 +269,9 @@ sub send_message {
 
 	# Get sync-data to verify membership of the room
 	%sync_res = matrix_sync($node, $access_token);
+	if (not %sync_res) {
+		irc_log("failed to get sync data");
+	}
 
 	# Verifying room membership or creating a new room
 	if (%sync_res and $sync_res{'rooms'}{'join'}{$room_id_cached}){
@@ -289,9 +314,9 @@ sub handle_pub_msgs {
 
 	my $message_str;
 
-	if (index($message, $server->{nick}) >= 0 &&
+	if ((index($message, $server->{nick}) >= 0) &&
 	    $settings_mentions &&
-	    $server->{usermode_away}) {
+	    (!$settings_away_only || $server->{usermode_away})) {
 		$message_str = $user . '@' . $target . ': ' . $message;
 
 		send_message($settings_node,
@@ -312,7 +337,10 @@ sub handle_priv_msgs {
 
 	my $message_str;
 
-	if ($settings_priv_msgs && $server->{usermode_away}) {
+	if ($settings_priv_msgs &&
+	    (!$settings_away_only || $server->{usermode_away})) {
+		$message_str = "$user (private): $message";
+
 		send_message($settings_node,
 		             $settings_user,
 		             $settings_password,
@@ -334,6 +362,7 @@ sub load_settings {
 	$settings_to_user   = Irssi::settings_get_str($settings_str{'to_user'});
 	$settings_to_node   = Irssi::settings_get_str($settings_str{'to_node'});
 	$settings_room      = Irssi::settings_get_str($settings_str{'room'});
+	$settings_away_only = Irssi::settings_get_bool($settings_str{'away_only'});
 	$settings_priv_msgs = Irssi::settings_get_bool($settings_str{'priv_msgs'});
 	$settings_mentions  = Irssi::settings_get_bool($settings_str{'mentions'});
 }
@@ -354,6 +383,7 @@ sub init {
 	Irssi::settings_add_str($settings_section, $settings_str{'to_user'}, '');
 	Irssi::settings_add_str($settings_section, $settings_str{'to_node'}, 'https://matrix.org');
 	Irssi::settings_add_str($settings_section, $settings_str{'room'}, '');
+	Irssi::settings_add_bool($settings_section, $settings_str{'away_only'}, 0);
 	Irssi::settings_add_bool($settings_section, $settings_str{'priv_msgs'}, 0);
 	Irssi::settings_add_bool($settings_section, $settings_str{'mentions'}, 0);
 
